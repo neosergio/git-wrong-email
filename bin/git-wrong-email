@@ -1,0 +1,204 @@
+#!/bin/sh
+# git-wrong-email -- install, inspect and remove the wrong-email guard.
+#
+# Named so that with this file on PATH, `git wrong-email <cmd>` works as a git
+# subcommand.
+
+set -eu
+
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+root=$config_home/git-wrong-email
+hooks_dir=$root/hooks
+rules_file=$root/rules
+
+# Every client-side hook name. All of them get a copy, not just the three with
+# checks: core.hooksPath makes git ignore .git/hooks wholesale, so a name we do
+# not install is a name whose repository-local hook silently stops running.
+HOOK_NAMES="
+applypatch-msg
+pre-applypatch
+post-applypatch
+pre-commit
+pre-merge-commit
+prepare-commit-msg
+commit-msg
+post-commit
+pre-rebase
+post-checkout
+post-merge
+pre-push
+pre-auto-gc
+post-rewrite
+sendemail-validate
+reference-transaction
+push-to-checkout
+post-index-change
+"
+
+die() {
+    echo "git-wrong-email: $*" >&2
+    exit 1
+}
+
+# Where this script lives, so it can find the hook and example alongside it.
+self_dir() {
+    d=$(dirname "$0")
+    (cd "$d" && pwd -P)
+}
+
+hook_source() {
+    for candidate in "$(self_dir)/../hook/git-wrong-email-hook" \
+        "$(self_dir)/git-wrong-email-hook" \
+        "$(self_dir)/../libexec/git-wrong-email-hook"; do
+        [ -f "$candidate" ] && {
+            (cd "$(dirname "$candidate")" && pwd -P)
+            return 0
+        }
+    done
+    return 1
+}
+
+hook_path() {
+    dir=$(hook_source) || die "cannot find git-wrong-email-hook next to $0"
+    echo "$dir/git-wrong-email-hook"
+}
+
+example_rules() {
+    dir=$(self_dir)
+    for candidate in "$dir/../examples/rules" "$dir/../share/git-wrong-email/rules"; do
+        [ -f "$candidate" ] && {
+            echo "$candidate"
+            return 0
+        }
+    done
+    return 1
+}
+
+current_hooks_path() {
+    git config --global --get core.hooksPath 2>/dev/null || true
+}
+
+is_ours() { # path
+    [ -n "$1" ] && [ -f "$1/pre-commit" ] &&
+        grep -q '^# git-wrong-email' "$1/pre-commit" 2>/dev/null
+}
+
+cmd_install() {
+    source=$(hook_path)
+    mkdir -p "$hooks_dir"
+
+    existing=$(current_hooks_path)
+    if [ -n "$existing" ] && ! is_ours "$existing"; then
+        # Somebody else owns core.hooksPath (husky, lefthook, a dotfiles repo).
+        # Chain to it instead of replacing it silently.
+        git config --global wrongEmail.chainTo "$existing"
+        echo "note: core.hooksPath was $existing"
+        echo "      recorded as wrongEmail.chainTo; those hooks still run after the check."
+    fi
+
+    for name in $HOOK_NAMES; do
+        cp "$source" "$hooks_dir/$name"
+        chmod 755 "$hooks_dir/$name"
+    done
+    git config --global core.hooksPath "$hooks_dir"
+
+    if [ -f "$rules_file" ]; then
+        echo "rules: $rules_file (kept)"
+    else
+        if sample=$(example_rules); then
+            cp "$sample" "$rules_file"
+        else
+            cat > "$rules_file" <<'SAMPLE'
+# One rule per line:  <directory>  <email> [<email> ...]
+# First matching directory wins, so put specific rules first and "*" last.
+*  change-me@example.com
+SAMPLE
+        fi
+        echo "rules: $rules_file (created from the example -- EDIT IT NOW)"
+    fi
+
+    echo "installed $(printf '%s' "$HOOK_NAMES" | grep -c .) hooks in $hooks_dir"
+    echo "core.hooksPath -> $hooks_dir"
+}
+
+cmd_uninstall() {
+    existing=$(current_hooks_path)
+    if is_ours "$existing"; then
+        chain=$(git config --global --get wrongEmail.chainTo 2>/dev/null || true)
+        if [ -n "$chain" ]; then
+            git config --global core.hooksPath "$chain"
+            echo "core.hooksPath restored to $chain"
+        else
+            git config --global --unset core.hooksPath
+            echo "core.hooksPath unset"
+        fi
+        git config --global --unset wrongEmail.chainTo 2>/dev/null || true
+    else
+        echo "core.hooksPath is not ours (${existing:-unset}); left alone"
+    fi
+
+    for name in $HOOK_NAMES; do
+        rm -f "$hooks_dir/$name"
+    done
+    rmdir "$hooks_dir" 2>/dev/null || true
+    echo "hooks removed; $rules_file kept"
+}
+
+cmd_status() {
+    existing=$(current_hooks_path)
+    installed=0
+    for name in $HOOK_NAMES; do
+        [ -x "$hooks_dir/$name" ] && installed=$((installed + 1))
+    done
+    total=$(printf '%s' "$HOOK_NAMES" | grep -c .)
+
+    echo "rules file     ${rules_file}$([ -r "$rules_file" ] || echo '  (MISSING)')"
+    echo "hooks dir      $hooks_dir"
+    echo "hooks present  $installed/$total"
+    echo "core.hooksPath ${existing:-<unset>}"
+    if is_ours "$existing"; then
+        echo "active         yes"
+    else
+        echo "active         NO -- run: git wrong-email install"
+    fi
+    chain=$(git config --global --get wrongEmail.chainTo 2>/dev/null || true)
+    [ -n "$chain" ] && echo "chain to       $chain"
+
+    if [ -r "$rules_file" ]; then
+        echo
+        echo "rules:"
+        grep -v '^[[:space:]]*\(#\|$\)' "$rules_file" | sed 's/^/  /'
+    fi
+    return 0
+}
+
+cmd_help() {
+    cat <<'USAGE'
+git-wrong-email -- refuse commits and pushes made under the wrong email.
+
+usage: git wrong-email <command>
+
+  install     copy the hook under every client-side hook name and point
+              core.hooksPath at it; create a rules file if there is none
+  uninstall   remove the hooks and restore core.hooksPath; keeps the rules
+  status      where everything is, whether it is active, and the rules in force
+  help        this
+
+rules file: ~/.config/git-wrong-email/rules
+  <directory>  <email> [<email> ...]      first match wins, "*" goes last
+
+per-repository escape for a collaborator's commits you carry:
+  git config --add wrongEmail.allowedAuthor someone@example.com
+
+deliberate bypass:
+  git commit --no-verify / git push --no-verify
+USAGE
+}
+
+case ${1:-help} in
+install) cmd_install ;;
+uninstall) cmd_uninstall ;;
+status) cmd_status ;;
+help | -h | --help) cmd_help ;;
+*) die "unknown command '$1'; try: git wrong-email help" ;;
+esac

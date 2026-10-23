@@ -1,0 +1,138 @@
+#!/bin/sh
+# git-wrong-email -- refuses a commit or push whose author or committer email
+# does not belong to the directory the repository lives in.
+#
+# Installed under every client-side hook name by `git wrong-email install`,
+# which also points core.hooksPath here. Since core.hooksPath makes git skip
+# each repository's own .git/hooks, this script runs that hook itself after its
+# own checks, so nothing that already relied on .git/hooks stops working.
+#
+# Only three hook names carry checks; the rest exist purely to chain:
+#
+#   pre-commit, pre-merge-commit
+#               the author and committer about to be recorded
+#   pre-push    every commit being pushed that no remote has yet, which also
+#               catches commits made with --no-verify, by another tool, or
+#               brought in by a rebase or cherry-pick
+#
+# This checks the *result* -- what git will actually stamp on the commit --
+# rather than the configuration, so it catches a wrong address however it got
+# there: a clobbered ~/.gitconfig, an environment override, a GUI client, an
+# includeIf that does not match what you assumed.
+#
+# Rules: ~/.config/git-wrong-email/rules ($GIT_WRONG_EMAIL_RULES overrides).
+#
+# A repository may allow extra *authors* -- a collaborator whose commits you
+# carry -- with:
+#   git config --add wrongEmail.allowedAuthor someone@example.com
+# The committer, which is always you, has no such escape.
+#
+# Deliberate bypass: git commit --no-verify / git push --no-verify
+
+hook=$(basename "$0")
+rules=${GIT_WRONG_EMAIL_RULES:-${XDG_CONFIG_HOME:-$HOME/.config}/git-wrong-email/rules}
+
+# Print the emails allowed for the current repository, one per line. The first
+# rule whose directory contains the repository wins, so rules go from most to
+# least specific; "*" matches everything and belongs last.
+allowed_emails() {
+    top=$(git rev-parse --show-toplevel 2>/dev/null) ||
+        top=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd -P)
+    [ -r "$rules" ] || {
+        echo "git-wrong-email: no rules file at $rules" >&2
+        echo "  Create one: git wrong-email install" >&2
+        return 1
+    }
+    while read -r dir emails; do
+        case $dir in '' | '#'*) continue ;; esac
+        if [ "$dir" != "*" ]; then
+            case $dir in \~/*) dir="$HOME/${dir#\~/}" ;; esac
+            case "$top/" in "${dir%/}/"*) ;; *) continue ;; esac
+        fi
+        for email in $emails; do echo "$email"; done
+        return 0
+    done < "$rules"
+    echo "git-wrong-email: no rule in $rules matches $top" >&2
+    echo "  Add a '*' rule last to cover everything else." >&2
+    return 1
+}
+
+is_listed() { # email list
+    printf '%s\n' "$2" | grep -Fqx -- "$1"
+}
+
+refuse() { # what email allowed
+    echo "git-wrong-email: $1 email is '$2', which this repository does not accept." >&2
+    echo "  Repository: $(git rev-parse --show-toplevel 2>/dev/null || pwd)" >&2
+    echo "  Allowed: $(printf '%s' "$3" | tr '\n' ' ')" >&2
+    echo "  Check: git config --show-origin user.email" >&2
+    exit 1
+}
+
+check() { # author committer subject
+    is_listed "$2" "$allowed" || refuse "${3}committer" "$2" "$allowed"
+    is_listed "$1" "$allowed" || is_listed "$1" "$extra_authors" ||
+        refuse "${3}author" "$1" "$allowed"
+}
+
+ident_email() {
+    git var "$1" | sed -E 's/.*<([^>]*)>.*/\1/'
+}
+
+pushed=""
+case $hook in
+pre-commit | pre-merge-commit | pre-push)
+    allowed=$(allowed_emails) || exit 1
+    extra_authors=$(git config --get-all wrongEmail.allowedAuthor)
+    ;;
+esac
+
+case $hook in
+pre-commit | pre-merge-commit)
+    check "$(ident_email GIT_AUTHOR_IDENT)" "$(ident_email GIT_COMMITTER_IDENT)" ""
+    ;;
+pre-push)
+    pushed=$(cat)
+    printf '%s\n' "$pushed" | while read -r _local_ref local_sha _remote_ref remote_sha; do
+        [ -n "$local_sha" ] || continue
+        case $local_sha in *[!0]*) ;; *) continue ;; esac # deleting a ref
+        # Whatever any remote already has is public already, and judging it
+        # again would only block pushes over history nobody can fix: a new
+        # ref, or an existing one that merges in another branch, such as a
+        # forge's merge commit on main whose committer is noreply@github.com.
+        # This relies on refs/remotes being fetched; a stale one only makes
+        # the check stricter, never looser.
+        case $remote_sha in
+        *[!0]*) range="$local_sha --not $remote_sha --remotes" ;;
+        *) range="$local_sha --not --remotes" ;;
+        esac
+        # shellcheck disable=SC2086 # range is deliberately split into arguments
+        git rev-list --format='%H %ae %ce' $range | grep -v '^commit ' |
+            while read -r sha author committer; do
+                check "$author" "$committer" "commit ${sha%"${sha#???????}"} " || exit 1
+            done || exit 1
+    done || exit 1
+    ;;
+esac
+
+# Chain to whatever would have run if this script were not here. Normally that
+# is the repository's own hook; if core.hooksPath already pointed somewhere
+# else when this was installed, `install` recorded it as wrongEmail.chainTo so
+# that setup keeps working too.
+chain=$(git config --get wrongEmail.chainTo)
+if [ -z "$chain" ]; then
+    # Not every hook runs inside a usable repository: reference-transaction
+    # fires three times during `git init`, before there is a git dir to ask
+    # about. Nothing to chain to then, and nothing to complain about either.
+    common=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
+    chain="$common/hooks"
+fi
+next="$chain/$hook"
+if [ -x "$next" ] && [ "$(cd "$(dirname "$next")" && pwd -P)" != "$(cd "$(dirname "$0")" && pwd -P)" ]; then
+    if [ "$hook" = pre-push ]; then
+        printf '%s\n' "$pushed" | "$next" "$@"
+        exit $?
+    fi
+    exec "$next" "$@"
+fi
+exit 0

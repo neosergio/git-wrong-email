@@ -1,0 +1,27 @@
+# git-wrong-email rules: which emails may author and commit in a repository,
+# decided by the directory the repository lives in.
+#
+#   <directory>  <email> [<email> ...]
+#
+# The first directory that contains the repository wins, so specific rules go
+# first and "*" -- everything else -- goes last. A repository under no listed
+# directory and with no "*" rule is refused outright, on purpose: an unmatched
+# repository is one you have not thought about yet.
+#
+# These should agree with whatever sets your identity in the first place
+# (includeIf blocks in ~/.gitconfig, a per-repo user.email, a switcher tool).
+# This file is the check, not the source -- it catches the case where the thing
+# that was supposed to set your identity didn't.
+
+~/work/acme/        you@acme.example
+~/work/globex/      you@globex.example
+
+# A client's work kept outside the directory named after them.
+~/projects/side-contract/   you@globex.example
+
+# Personal projects, listed explicitly rather than left to the "*" below --
+# the global default is exactly the value a GUI client rewrites when it
+# "syncs" your profile, so being explicit here is what makes the check bite.
+~/code/             you@personal.example  you@users.noreply.github.com
+
+*                   you@personal.example  you@users.noreply.github.com
