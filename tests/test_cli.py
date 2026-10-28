@@ -121,6 +121,22 @@ def test_uninstall_restores_a_hooks_path_that_was_already_set(home):
     assert home.rules.exists()
 
 
+def test_a_hooks_path_already_pointing_at_ours_is_not_chained_to(home):
+    # A dotfiles manager that renders ~/.gitconfig may set core.hooksPath to
+    # our directory before `install` has created it. Recording that as
+    # chainTo would make `uninstall` "restore" the path it is removing.
+    subprocess.run(
+        ["git", "config", "--global", "core.hooksPath", str(home.hooks)],
+        env=home.env, check=True,
+    )
+
+    result = home.run(REPO_ROOT / "bin/git-wrong-email", "install")
+    assert result.returncode == 0, result.stderr
+    assert "chainTo" not in result.stdout
+    assert home.config("wrongEmail.chainTo") == ""
+    _assert_installed(home)
+
+
 def test_status_reports_whether_it_is_active(home):
     script = REPO_ROOT / "bin/git-wrong-email"
     assert "active         NO" in home.run(script, "status").stdout

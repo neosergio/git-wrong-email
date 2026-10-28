@@ -6,7 +6,7 @@
 
 set -eu
 
-version=0.1.0
+version=0.1.1
 
 config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 root=$config_home/git-wrong-email
@@ -89,8 +89,12 @@ current_hooks_path() {
     git config --global --get core.hooksPath 2>/dev/null || true
 }
 
+# A dotfiles manager may set core.hooksPath to our directory before `install`
+# has put anything in it; that is still ours, not something to chain to.
 is_ours() { # path
-    [ -n "$1" ] && [ -f "$1/pre-commit" ] &&
+    [ -n "$1" ] || return 1
+    [ "$1" = "$hooks_dir" ] && return 0
+    [ -f "$1/pre-commit" ] &&
         grep -q '^# git-wrong-email' "$1/pre-commit" 2>/dev/null
 }
 
