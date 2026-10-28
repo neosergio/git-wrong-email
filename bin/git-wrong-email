@@ -6,6 +6,8 @@
 
 set -eu
 
+version=0.1.0
+
 config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 root=$config_home/git-wrong-email
 hooks_dir=$root/hooks
@@ -40,10 +42,19 @@ die() {
     exit 1
 }
 
-# Where this script lives, so it can find the hook and example alongside it.
+# Where this script really lives, so it can find the hook and example alongside
+# it. Symlinks are followed: Homebrew runs it as $(brew --prefix)/bin/..., a link
+# into the Cellar, and the hook is next to the target, not next to the link.
 self_dir() {
-    d=$(dirname "$0")
-    (cd "$d" && pwd -P)
+    f=$0
+    while [ -L "$f" ]; do
+        link=$(readlink "$f")
+        case $link in
+        /*) f=$link ;;
+        *) f=$(dirname "$f")/$link ;;
+        esac
+    done
+    (cd "$(dirname "$f")" && pwd -P)
 }
 
 hook_source() {
@@ -182,6 +193,7 @@ usage: git wrong-email <command>
               core.hooksPath at it; create a rules file if there is none
   uninstall   remove the hooks and restore core.hooksPath; keeps the rules
   status      where everything is, whether it is active, and the rules in force
+  version     print the version
   help        this
 
 rules file: ~/.config/git-wrong-email/rules
@@ -199,6 +211,7 @@ case ${1:-help} in
 install) cmd_install ;;
 uninstall) cmd_uninstall ;;
 status) cmd_status ;;
+version | -V | --version) echo "git-wrong-email $version" ;;
 help | -h | --help) cmd_help ;;
 *) die "unknown command '$1'; try: git wrong-email help" ;;
 esac

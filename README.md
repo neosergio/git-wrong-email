@@ -36,14 +36,25 @@ wrong.
 ## Install
 
 ```sh
+brew install neosergio/tap/git-wrong-email
+git wrong-email install
+$EDITOR ~/.config/git-wrong-email/rules
+```
+
+`install` copies the hook, so run it again after `brew upgrade` to pick up the
+new version.
+
+Without Homebrew:
+
+```sh
 git clone https://github.com/neosergio/git-wrong-email
 cd git-wrong-email
 ./bin/git-wrong-email install
 $EDITOR ~/.config/git-wrong-email/rules
 ```
 
-Put `bin/` on your `PATH` and it also works as a git subcommand:
-`git wrong-email status`.
+Put `bin/` on your `PATH` (or link `bin/git-wrong-email` into it) and it also
+works as a git subcommand: `git wrong-email status`.
 
 `install` copies the hook into `~/.config/git-wrong-email/hooks` under every
 client-side hook name and points `core.hooksPath` at it. That is global: every
@@ -129,7 +140,7 @@ git wrong-email uninstall   # removes the hooks, restores core.hooksPath, keeps 
 ## Tests
 
 ```sh
-pytest        # 18 tests; needs pytest and git, nothing else
+pytest        # 25 tests; needs pytest and git, nothing else
 ```
 
 They build a throwaway `$HOME` with its own global config and drive real git in
@@ -157,7 +168,6 @@ above, which is why this exists.
 
 - Verifying the account you authenticate to the remote as, not just the email
 - A `doctor` that cross-checks these rules against your `includeIf` blocks
-- Homebrew tap
 
 ## License
 
