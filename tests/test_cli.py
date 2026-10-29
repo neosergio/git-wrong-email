@@ -30,9 +30,12 @@ class Home:
             "GIT_CONFIG_NOSYSTEM": "1",
         }
 
-    def run(self, script: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, script: Path, *args: str, cwd: Path | None = None
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [str(script), *args], env=self.env, text=True, capture_output=True
+            [str(script), *args], env=self.env, text=True, capture_output=True,
+            cwd=cwd,
         )
 
     def config(self, key: str) -> str:
@@ -143,6 +146,27 @@ def test_status_reports_whether_it_is_active(home):
 
     home.run(script, "install")
     assert "active         yes" in home.run(script, "status").stdout
+
+
+def test_status_warns_when_a_repository_overrides_the_hooks_path(home, tmp_path):
+    # husky's prepare script runs `git config core.hooksPath .husky/_`, which
+    # wins over the global setting and quietly turns the check off.
+    script = REPO_ROOT / "bin/git-wrong-email"
+    repo = tmp_path / "repo"
+    subprocess.run(["git", "init", "-q", str(repo)], env=home.env, check=True)
+    assert home.run(script, "install").returncode == 0
+
+    status = home.run(script, "status", cwd=repo)
+    assert status.returncode == 0
+    assert "this repo" not in status.stdout
+
+    subprocess.run(
+        ["git", "config", "core.hooksPath", ".husky/_"],
+        env=home.env, cwd=repo, check=True,
+    )
+    status = home.run(script, "status", cwd=repo)
+    assert status.returncode == 0
+    assert "core.hooksPath is .husky/_ -- the check does NOT run here" in status.stdout
 
 
 def test_version(home):

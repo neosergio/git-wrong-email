@@ -6,7 +6,7 @@
 
 set -eu
 
-version=0.1.1
+version=0.1.2
 
 config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 root=$config_home/git-wrong-email
@@ -178,6 +178,17 @@ cmd_status() {
     fi
     chain=$(git config --global --get wrongEmail.chainTo 2>/dev/null || true)
     [ -n "$chain" ] && echo "chain to       $chain"
+
+    # A repository can set its own core.hooksPath (husky does, from npm's
+    # prepare script), which beats the global one and switches the check off
+    # in that repository without a word.
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        effective=$(git config --get core.hooksPath 2>/dev/null || true)
+        if [ "$effective" != "$existing" ] && ! is_ours "$effective"; then
+            echo "this repo      core.hooksPath is ${effective:-<unset>} -- the check does NOT run here"
+            echo "               see: git config --show-origin --show-scope core.hooksPath"
+        fi
+    fi
 
     if [ -r "$rules_file" ]; then
         echo

@@ -140,7 +140,7 @@ git wrong-email uninstall   # removes the hooks, restores core.hooksPath, keeps 
 ## Tests
 
 ```sh
-pytest        # 26 tests; needs pytest and git, nothing else
+pytest        # 27 tests; needs pytest and git, nothing else
 ```
 
 They build a throwaway `$HOME` with its own global config and drive real git in
