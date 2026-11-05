@@ -6,7 +6,7 @@
 
 set -eu
 
-version=0.2.0
+version=0.2.1
 
 config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 root=$config_home/git-wrong-email
@@ -540,6 +540,7 @@ doctor_repositories() {
                 fail "$dp_label  commits as $dp_email; the rules allow only: $dp_allowed"
                 more "see: git -C $dp_label config --show-origin user.email"
             fi
+            doctor_tags "$dp_top" "$dp_label" "$dp_allowed"
         done
     done <"$rules_file"
 
@@ -548,6 +549,31 @@ doctor_repositories() {
     elif [ "$problems" = "$dp_before" ]; then
         ok "$dp_checked checked"
     fi
+}
+
+# Annotated tags whose tagger the rules would not accept. Only a note: pre-push
+# refuses such a tag before it leaves, and one that has already been pushed is
+# public, so there is nothing to fix in the configuration -- but it is worth
+# knowing about, and an unpushed one can still be remade.
+doctor_tags() { # top label allowed
+    dg_extra=$(git -C "$1" config --get-all wrongEmail.allowedAuthor 2>/dev/null || true)
+    dg_bad=""
+    while read -r dg_type dg_name dg_email; do
+        [ "$dg_type" = tag ] || continue
+        dg_email=${dg_email#<}
+        dg_email=${dg_email%>}
+        [ -n "$dg_email" ] || continue
+        is_allowed "$dg_email" "$3" && continue
+        is_allowed "$dg_email" "$dg_extra" && continue
+        dg_bad="$dg_bad $dg_name ($dg_email)"
+    done <<EOF
+$(git -C "$1" for-each-ref refs/tags \
+        --format='%(objecttype) %(refname:short) %(taggeremail)' 2>/dev/null)
+EOF
+    [ -n "$dg_bad" ] || return 0
+    note "$2  tags whose tagger the rules would not accept:$dg_bad"
+    more "pushing one is refused; if one is already public, it stays as it is"
+    more "remake an unpushed one: git tag -d <tag> && git tag -a <tag> <commit>"
 }
 
 doctor_environment() {
