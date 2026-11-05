@@ -307,11 +307,22 @@ git wrong-email uninstall   # removes the hooks, restores core.hooksPath, keeps 
 ## Tests
 
 ```sh
-pytest        # 40 tests; needs pytest and git, nothing else
+pytest        # 42 tests; needs pytest and git, nothing else
 ```
 
 They build a throwaway `$HOME` with its own global config and drive real git in
 a temp directory, so they never touch your `~/.gitconfig`.
+
+## Demo
+
+```sh
+./demo/video-demo.sh               # one command per Enter
+DEMO_AUTO=1 ./demo/video-demo.sh   # straight through, checking each outcome
+```
+
+This runs the client walkthrough and five ways of getting the email wrong, all
+in a throwaway `$HOME` with no network access. Your own configuration never
+appears on screen, which makes it safe to record.
 
 ## Compared to the alternatives
 
