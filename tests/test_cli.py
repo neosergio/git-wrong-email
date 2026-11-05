@@ -7,6 +7,7 @@ real ~/.gitconfig is never touched.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -173,3 +174,137 @@ def test_version(home):
     result = home.run(REPO_ROOT / "bin/git-wrong-email", "--version")
     assert result.returncode == 0
     assert result.stdout.startswith("git-wrong-email ")
+
+
+# --- doctor ---------------------------------------------------------------
+
+CLIENT = "you@client.example"
+PERSONAL = "you@personal.example"
+
+
+def _doctor_setup(home: Home, rules: str) -> None:
+    """Installed, with a rules file and a global identity, ready to break."""
+    assert home.run(REPO_ROOT / "bin/git-wrong-email", "install").returncode == 0
+    home.rules.write_text(rules)
+    for key, value in (
+        ("user.email", PERSONAL),
+        ("user.name", "You"),
+        ("user.useConfigOnly", "true"),
+    ):
+        subprocess.run(
+            ["git", "config", "--global", key, value], env=home.env, check=True
+        )
+
+
+def _client_include(home: Home, pattern: str = "~/work/client/") -> None:
+    (home.path / ".gitconfig-client").write_text(f"[user]\n\temail = {CLIENT}\n")
+    subprocess.run(
+        ["git", "config", "--global", f"includeIf.gitdir:{pattern}.path",
+         "~/.gitconfig-client"],
+        env=home.env, check=True,
+    )
+
+
+def _doctor(home: Home) -> subprocess.CompletedProcess[str]:
+    return home.run(REPO_ROOT / "bin/git-wrong-email", "doctor", cwd=home.path)
+
+
+RULES_OK = f"~/work/client/  {CLIENT}\n~/code/  {PERSONAL}\n*  {PERSONAL}\n"
+
+
+def test_doctor_passes_when_rules_and_include_agree(home):
+    _doctor_setup(home, RULES_OK)
+    _client_include(home)
+
+    result = _doctor(home)
+    assert result.returncode == 0, result.stdout
+    assert re.search(rf"~/work/client/ +{CLIENT}  \(from ~/.gitconfig-client\)", result.stdout)
+    assert "no problems found" in result.stdout
+
+
+def test_doctor_reports_a_rule_with_no_include_and_says_how_to_add_one(home):
+    # The step people forget: the rule is written, nothing assigns the email.
+    _doctor_setup(home, RULES_OK)
+
+    result = _doctor(home)
+    assert result.returncode == 1
+    assert f"would commit as {PERSONAL} (from ~/.gitconfig)" in result.stdout
+    assert f"git config --file ~/.gitconfig-client user.email {CLIENT}" in result.stdout
+    assert 'includeIf."gitdir:~/work/client/".path ~/.gitconfig-client' in result.stdout
+
+
+def test_doctor_reports_a_rule_after_the_star(home):
+    _doctor_setup(home, f"*  {PERSONAL}\n~/work/client/  {CLIENT}\n")
+    _client_include(home)
+
+    result = _doctor(home)
+    assert result.returncode == 1
+    assert 'line 2: ~/work/client/ comes after "*", so it can never match' in result.stdout
+    # ...and it is not then reported as fine just because "*" accepts the email.
+    assert "ok    ~/work/client/" not in result.stdout
+
+
+def test_doctor_reports_a_rule_shadowed_by_a_broader_one(home):
+    _doctor_setup(home, f"~/work/  {PERSONAL}\n~/work/client/  {CLIENT}\n*  {PERSONAL}\n")
+    _client_include(home)
+
+    result = _doctor(home)
+    assert result.returncode == 1
+    assert "line 2: ~/work/client/ is inside ~/work from line 1" in result.stdout
+
+
+def test_doctor_reports_an_include_without_a_trailing_slash(home):
+    # gitdir:~/work/client only matches a .git that *is* ~/work/client.
+    _doctor_setup(home, RULES_OK)
+    _client_include(home, pattern="~/work/client")
+
+    result = _doctor(home)
+    assert result.returncode == 1
+    assert 'includeIf "gitdir:~/work/client" has no trailing slash' in result.stdout
+
+
+def test_doctor_reports_an_include_whose_directory_has_no_rule(home):
+    # The client's identity is set up, but the rules send it to "*".
+    _doctor_setup(home, f"~/code/  {PERSONAL}\n*  {PERSONAL}\n")
+    _client_include(home)
+
+    result = _doctor(home)
+    assert result.returncode == 1
+    assert re.search(rf"~/work/client/ +a repository here would commit as {CLIENT}", result.stdout)
+
+
+def test_doctor_reports_an_include_pointing_at_a_missing_file(home):
+    _doctor_setup(home, RULES_OK)
+    _client_include(home)
+    (home.path / ".gitconfig-client").unlink()
+
+    result = _doctor(home)
+    assert result.returncode == 1
+    assert "~/.gitconfig-client, which does not exist" in result.stdout
+
+
+def test_doctor_checks_repositories_that_already_exist(home):
+    _doctor_setup(home, RULES_OK)
+    _client_include(home)
+    repo = home.path / "work/client/app"
+    repo.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(repo)], env=home.env, check=True)
+    assert _doctor(home).returncode == 0
+
+    # A per-repository user.email beats the includeIf; doctor asks git itself.
+    subprocess.run(
+        ["git", "config", "user.email", PERSONAL], cwd=repo, env=home.env, check=True
+    )
+    result = _doctor(home)
+    assert result.returncode == 1
+    assert f"~/work/client/app  commits as {PERSONAL}" in result.stdout
+
+
+def test_doctor_reports_when_the_hooks_are_not_installed(home):
+    _doctor_setup(home, RULES_OK)
+    _client_include(home)
+    home.run(REPO_ROOT / "bin/git-wrong-email", "uninstall")
+
+    result = _doctor(home)
+    assert result.returncode == 1
+    assert "so nothing is checked" in result.stdout
