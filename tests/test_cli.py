@@ -308,3 +308,26 @@ def test_doctor_reports_when_the_hooks_are_not_installed(home):
     result = _doctor(home)
     assert result.returncode == 1
     assert "so nothing is checked" in result.stdout
+
+
+def test_doctor_notes_tags_with_a_tagger_the_rules_refuse(home):
+    _doctor_setup(home, RULES_OK)
+    _client_include(home)
+    repo = home.path / "code/site"
+    repo.mkdir(parents=True)
+    git = lambda *a, **env: subprocess.run(  # noqa: E731
+        ["git", *a], cwd=repo, env={**home.env, **env}, check=True,
+        capture_output=True,
+    )
+    git("init", "-q")
+    git("commit", "-q", "--allow-empty", "-m", "first")
+    git("tag", "-a", "good", "-m", "good")
+    git("tag", "-a", "bad", "-m", "bad", GIT_COMMITTER_EMAIL=CLIENT)
+    git("tag", "light")
+
+    result = _doctor(home)
+    # A note, not a failure: pre-push already refuses it, and a pushed one is
+    # public history.
+    assert result.returncode == 0, result.stdout
+    assert f"~/code/site  tags whose tagger the rules would not accept: bad ({CLIENT})" in result.stdout
+    assert "good (" not in result.stdout and "light" not in result.stdout

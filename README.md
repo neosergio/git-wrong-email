@@ -254,12 +254,18 @@ in the middle of a pattern. Run it after any change to the rules or to
 | Hook | Checks |
 |---|---|
 | `pre-commit`, `pre-merge-commit` | the author and committer about to be recorded |
-| `pre-push` | every commit being pushed that no remote has yet |
+| `pre-push` | every commit being pushed that no remote has yet, and the tagger of every annotated tag being pushed |
 
 The `pre-push` pass is the one that matters most, and the one most tools skip.
 It re-reads the actual commits, so it still catches a bad email that got in via
 `--no-verify`, via a GUI or coding agent that bypassed the commit hook, or via
 a rebase or cherry-pick that rewrote someone else's commits under your name.
+
+It also checks tags. An annotated tag records its own identity, the *tagger*,
+taken from your committer settings when the tag was made. git has no pre-tag
+hook, so a release tag made while `~/.gitconfig` held the wrong address is
+first seen when it is pushed, including when it rides along with
+`--follow-tags` or `--tags`. Lightweight tags have no tagger and pass.
 
 History a remote already has is deliberately not judged: it's public already,
 and blocking a push over commits nobody can fix any more just teaches you to
@@ -274,8 +280,9 @@ Carrying a collaborator's commits in one repository:
 git config --add wrongEmail.allowedAuthor someone@example.com
 ```
 
-That allows them as an **author** only. The committer is always you, and has no
-escape.
+That allows them as an **author** only. It also allows them as the tagger of a
+tag you push for them, such as an upstream release tag in a fork. The committer
+is always you, and has no escape.
 
 Deliberate one-off bypass: `git commit --no-verify`, `git push --no-verify`.
 A commit that slips past the first will still be caught by the second.
@@ -300,7 +307,7 @@ git wrong-email uninstall   # removes the hooks, restores core.hooksPath, keeps 
 ## Tests
 
 ```sh
-pytest        # 36 tests; needs pytest and git, nothing else
+pytest        # 40 tests; needs pytest and git, nothing else
 ```
 
 They build a throwaway `$HOME` with its own global config and drive real git in

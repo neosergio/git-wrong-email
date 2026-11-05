@@ -13,7 +13,8 @@
 #               the author and committer about to be recorded
 #   pre-push    every commit being pushed that no remote has yet, which also
 #               catches commits made with --no-verify, by another tool, or
-#               brought in by a rebase or cherry-pick
+#               brought in by a rebase or cherry-pick; and the tagger of every
+#               annotated tag being pushed
 #
 # This checks the *result* -- what git will actually stamp on the commit --
 # rather than the configuration, so it catches a wrong address however it got
@@ -25,7 +26,9 @@
 # A repository may allow extra *authors* -- a collaborator whose commits you
 # carry -- with:
 #   git config --add wrongEmail.allowedAuthor someone@example.com
-# The committer, which is always you, has no such escape.
+# The same list covers the tagger of a tag you push on someone else's behalf,
+# such as an upstream release tag in a fork. The committer, which is always
+# you, has no such escape.
 #
 # Deliberate bypass: git commit --no-verify / git push --no-verify
 
@@ -93,9 +96,22 @@ pre-commit | pre-merge-commit)
     ;;
 pre-push)
     pushed=$(cat)
-    printf '%s\n' "$pushed" | while read -r _local_ref local_sha _remote_ref remote_sha; do
+    printf '%s\n' "$pushed" | while read -r local_ref local_sha _remote_ref remote_sha; do
         [ -n "$local_sha" ] || continue
         case $local_sha in *[!0]*) ;; *) continue ;; esac # deleting a ref
+        # An annotated tag carries its own identity, the tagger, taken from
+        # the committer settings when the tag was made. git has no pre-tag
+        # hook, so this is the first and only chance to look at it. Only tags
+        # this push creates or moves are listed here, so a tag every remote
+        # already has is never judged.
+        if [ "$(git cat-file -t "$local_sha" 2>/dev/null)" = tag ]; then
+            tagger=$(git cat-file tag "$local_sha" |
+                sed -n '/^$/q; s/^tagger .*<\([^>]*\)>.*/\1/p')
+            if [ -n "$tagger" ]; then
+                is_listed "$tagger" "$allowed" || is_listed "$tagger" "$extra_authors" ||
+                    refuse "tag ${local_ref#refs/tags/} tagger" "$tagger" "$allowed"
+            fi
+        fi
         # Whatever any remote already has is public already, and judging it
         # again would only block pushes over history nobody can fix: a new
         # ref, or an existing one that merges in another branch, such as a

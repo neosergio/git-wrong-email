@@ -305,3 +305,67 @@ def test_hooks_that_run_outside_a_usable_repository_stay_quiet(box):
 
     (path / "a").write_text("x")
     assert box.git(path, "add", "a").stderr == ""
+
+
+# --- annotated tags ---------------------------------------------------------
+#
+# git has no pre-tag hook, so a tag made while the global user.email was wrong
+# goes unnoticed until it is pushed -- which is how a client address ended up
+# as the tagger of a public release tag.
+
+
+def _tag(box: Sandbox, repo: Path, name: str, email: str) -> None:
+    box.env["GIT_COMMITTER_EMAIL"] = email  # where the tagger comes from
+    box.git(repo, "tag", "-a", name, "-m", name)
+    del box.env["GIT_COMMITTER_EMAIL"]
+
+
+def test_push_refuses_an_annotated_tag_with_the_wrong_tagger(box):
+    repo = box.repo("code/site", PERSONAL)
+    _remote(box, repo)
+    assert box.commit(repo).returncode == 0
+    box.git(repo, "push", "-q", "origin", "main")
+
+    _tag(box, repo, "v1.0", ACME)
+    result = box.git(repo, "push", "-q", "origin", "v1.0", check=False)
+
+    assert result.returncode != 0
+    assert f"tag v1.0 tagger email is '{ACME}'" in result.stderr
+    assert box.git(repo, "ls-remote", "--tags", "origin").stdout == ""
+
+
+def test_push_accepts_a_good_annotated_tag_and_a_lightweight_one(box):
+    repo = box.repo("code/site", PERSONAL)
+    _remote(box, repo)
+    assert box.commit(repo).returncode == 0
+    box.git(repo, "push", "-q", "origin", "main")
+
+    _tag(box, repo, "v1.0", PERSONAL)
+    box.git(repo, "tag", "light")  # no tag object, so no tagger to judge
+    result = box.git(repo, "push", "-q", "origin", "--tags", check=False)
+    assert result.returncode == 0, result.stderr
+
+
+def test_follow_tags_does_not_slip_a_bad_tag_through(box):
+    # The commit is fine; only the tag that rides along with it is not.
+    repo = box.repo("code/site", PERSONAL)
+    _remote(box, repo)
+    assert box.commit(repo).returncode == 0
+    _tag(box, repo, "v1.0", ACME)
+
+    result = box.git(repo, "push", "-q", "--follow-tags", "origin", "main", check=False)
+    assert result.returncode != 0
+    assert "tag v1.0 tagger" in result.stderr
+
+
+def test_an_allowed_author_may_be_the_tagger(box):
+    # Pushing an upstream release tag into a fork.
+    repo = box.repo("code/site", PERSONAL)
+    _remote(box, repo)
+    assert box.commit(repo).returncode == 0
+    box.git(repo, "push", "-q", "origin", "main")
+    _tag(box, repo, "upstream-1.0", "maintainer@example.com")
+    assert box.git(repo, "push", "-q", "origin", "upstream-1.0", check=False).returncode != 0
+
+    box.git(repo, "config", "--add", "wrongEmail.allowedAuthor", "maintainer@example.com")
+    assert box.git(repo, "push", "-q", "origin", "upstream-1.0", check=False).returncode == 0
