@@ -6,7 +6,7 @@
 
 set -eu
 
-version=0.2.1
+version=0.2.2
 
 config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 root=$config_home/git-wrong-email
@@ -425,6 +425,21 @@ EOF
     echo "*"
 }
 
+# The line of the rule written for exactly this directory, wherever it sits.
+own_rule_line() {
+    or_n=0
+    while read -r or_dir _; do
+        or_n=$((or_n + 1))
+        case $or_dir in '' | '#'* | '*') continue ;; esac
+        or_d=$(expand_home "$or_dir")
+        if [ "${or_d%/}" = "$1" ]; then
+            echo "$or_n"
+            return 0
+        fi
+    done <"$rules_file"
+    return 0
+}
+
 doctor_identity() { # directory, or "*"
     if [ "$1" = "*" ]; then
         di_label='* (anywhere else)' di_log="/$probe_name" di_phys="/$probe_name"
@@ -461,7 +476,19 @@ doctor_identity() { # directory, or "*"
         fail "$di_label  a repository here would commit as $di_email (from $(tilde "$di_from")),"
         more "but line $di_line of the rules allows only: $di_allowed"
     fi
-    if [ "$1" = "*" ]; then
+    di_own=$(own_rule_line "$1")
+    di_star=$(rule_for "/$probe_name") && di_star=${di_star#* }
+    if [ -n "$di_own" ] && [ "$di_own" != "$di_line" ]; then
+        # The directory has a rule of its own that never gets a say; changing
+        # the email to fit whichever rule wins instead would be backwards.
+        more "fix: move line $di_own of the rules above line $di_line -- the first matching rule wins"
+    elif [ "$1" = "*" ]; then
+        more "fix: git config --global user.email $di_want"
+    elif [ -z "$di_own" ] && [ "$di_via" = include ]; then
+        # An identity set up on purpose with no rule to go with it.
+        more "fix: add a rule above line $di_line: $(tilde "$1")/  $di_email"
+    elif [ "$di_via" = global ] && is_allowed "$di_want" "$di_star"; then
+        # The global email is what is wrong, not this directory's set-up.
         more "fix: git config --global user.email $di_want"
     elif [ "$di_via" = include ]; then
         more "fix: git config --file $(tilde "$di_from") user.email $di_want"

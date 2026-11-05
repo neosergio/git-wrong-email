@@ -240,8 +240,11 @@ def test_doctor_reports_a_rule_after_the_star(home):
     result = _doctor(home)
     assert result.returncode == 1
     assert 'line 2: ~/work/client/ comes after "*", so it can never match' in result.stdout
-    # ...and it is not then reported as fine just because "*" accepts the email.
+    # ...and it is not then reported as fine just because "*" accepts the email,
+    # nor "fixed" by changing the client's email to suit "*".
     assert "ok    ~/work/client/" not in result.stdout
+    assert "move line 2 of the rules above line 1" in result.stdout
+    assert f"user.email {PERSONAL}" not in result.stdout
 
 
 def test_doctor_reports_a_rule_shadowed_by_a_broader_one(home):
@@ -271,6 +274,7 @@ def test_doctor_reports_an_include_whose_directory_has_no_rule(home):
     result = _doctor(home)
     assert result.returncode == 1
     assert re.search(rf"~/work/client/ +a repository here would commit as {CLIENT}", result.stdout)
+    assert f"fix: add a rule above line 2: ~/work/client/  {CLIENT}" in result.stdout
 
 
 def test_doctor_reports_an_include_pointing_at_a_missing_file(home):
@@ -331,3 +335,19 @@ def test_doctor_notes_tags_with_a_tagger_the_rules_refuse(home):
     assert result.returncode == 0, result.stdout
     assert f"~/code/site  tags whose tagger the rules would not accept: bad ({CLIENT})" in result.stdout
     assert "good (" not in result.stdout and "light" not in result.stdout
+
+
+def test_doctor_blames_a_clobbered_global_email_not_each_directory(home):
+    # What a GUI client "syncing" a work profile does. The fix is the global
+    # email, not an includeIf for every personal directory.
+    _doctor_setup(home, RULES_OK)
+    _client_include(home)
+    subprocess.run(
+        ["git", "config", "--global", "user.email", CLIENT], env=home.env, check=True
+    )
+
+    result = _doctor(home)
+    assert result.returncode == 1
+    assert re.search(rf"~/code/ +a repository here would commit as {CLIENT}", result.stdout)
+    assert ".gitconfig-code" not in result.stdout
+    assert result.stdout.count(f"fix: git config --global user.email {PERSONAL}") == 2
