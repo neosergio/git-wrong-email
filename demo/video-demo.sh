@@ -103,16 +103,20 @@ say() { [ "$show" = 0 ] || printf '\n\033[2m# %s\033[0m' "$*"; }
 
 # Show a command, wait for Enter, run it in this shell (so cd sticks), and
 # check its outcome: "ok" (default) expects success, "fail" a refusal.
+# Its output is captured and shown with the sandbox paths as the viewer
+# would expect them: ~/... for $HOME, git@github.com:... for the remotes.
 run() {
     if [ "$show" = 1 ]; then
         printf '\n\033[1;34m%s\033[0m \033[1;32m$\033[0m %s' "$(here)" "$1"
         pause
         [ "$auto" = 1 ] && echo
-        eval "$1"
+        eval "$1" >"$SANDBOX/out" 2>&1
+        rc=$?
+        sed -e "s|$HOME|~|g" -e "s|$SANDBOX/github/|git@github.com:|g" "$SANDBOX/out"
     else
         eval "$1" >/dev/null 2>&1
+        rc=$?
     fi
-    rc=$?
     want=${2:-ok}
     if { [ "$want" = ok ] && [ $rc -ne 0 ]; } || { [ "$want" = fail ] && [ $rc -eq 0 ]; }; then
         surprises=$((surprises + 1))
