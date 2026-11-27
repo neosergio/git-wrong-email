@@ -6,6 +6,10 @@
 #   DEMO_AUTO=1 ./demo/video-demo.sh   no pauses; reports any step whose
 #                                      outcome differs from the expected one
 #   DEMO_KEEP=1 ...                    keep the sandbox afterwards
+#   DEMO_PARTS=1,2,4c,4d,4e,6 ...      show only these parts; the others still
+#                                      run, silently, so later parts find the
+#                                      state they expect (e.g. DEMO_PARTS=4d
+#                                      for a single Short)
 #
 # Everything happens in a throwaway $HOME, so your real ~/.gitconfig, SSH keys
 # and client names never appear on screen. Nothing touches the network:
@@ -61,9 +65,11 @@ fi
 # --- presentation -----------------------------------------------------------
 
 auto=${DEMO_AUTO:-0}
+parts=${DEMO_PARTS:-}
 surprises=0
+show=1
 
-pause() { [ "$auto" = 1 ] || read -r _ </dev/tty; }
+pause() { [ "$auto" = 1 ] || [ "$show" = 0 ] || read -r _ </dev/tty; }
 
 here() {
     case $PWD in
@@ -73,8 +79,17 @@ here() {
     esac
 }
 
-# A section banner; a natural cut point when editing.
+# A section banner; a natural cut point when editing. Its id is what comes
+# before the first dot ("4a" for "4a. Romperlo: ..."), matched against
+# DEMO_PARTS.
 part() {
+    show=1
+    if [ -n "$parts" ]; then
+        case ",$parts," in
+        *",${1%%.*},"*) ;;
+        *) show=0; return 0 ;;
+        esac
+    fi
     if [ "$auto" = 1 ]; then echo; else
         printf '\n\033[2m[enter: %s]\033[0m' "$1"
         pause
@@ -84,15 +99,19 @@ part() {
 }
 
 # A line of narration, dimmed, for the presenter rather than the viewer.
-say() { printf '\n\033[2m# %s\033[0m' "$*"; }
+say() { [ "$show" = 0 ] || printf '\n\033[2m# %s\033[0m' "$*"; }
 
 # Show a command, wait for Enter, run it in this shell (so cd sticks), and
 # check its outcome: "ok" (default) expects success, "fail" a refusal.
 run() {
-    printf '\n\033[1;34m%s\033[0m \033[1;32m$\033[0m %s' "$(here)" "$1"
-    pause
-    [ "$auto" = 1 ] && echo
-    eval "$1"
+    if [ "$show" = 1 ]; then
+        printf '\n\033[1;34m%s\033[0m \033[1;32m$\033[0m %s' "$(here)" "$1"
+        pause
+        [ "$auto" = 1 ] && echo
+        eval "$1"
+    else
+        eval "$1" >/dev/null 2>&1
+    fi
     rc=$?
     want=${2:-ok}
     if { [ "$want" = ok ] && [ $rc -ne 0 ]; } || { [ "$want" = fail ] && [ $rc -eq 0 ]; }; then

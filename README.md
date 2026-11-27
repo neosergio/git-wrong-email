@@ -318,6 +318,7 @@ a temp directory, so they never touch your `~/.gitconfig`.
 ```sh
 ./demo/video-demo.sh               # one command per Enter
 DEMO_AUTO=1 ./demo/video-demo.sh   # straight through, checking each outcome
+DEMO_PARTS=1,2,4c,4d,4e,6 ./demo/video-demo.sh   # show only these parts
 ```
 
 This runs the client walkthrough and five ways of getting the email wrong, all
