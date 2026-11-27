@@ -9,7 +9,9 @@
 #   DEMO_PARTS=1,2,4c,4d,4e,6 ...      show only these parts; the others still
 #                                      run, silently, so later parts find the
 #                                      state they expect (e.g. DEMO_PARTS=4d
-#                                      for a single Short)
+#                                      for a single Short). A part shown on
+#                                      its own also skips the steps that only
+#                                      set its scene
 #
 # Everything happens in a throwaway $HOME, so your real ~/.gitconfig, SSH keys
 # and client names never appear on screen. Nothing touches the network:
@@ -66,6 +68,8 @@ fi
 
 auto=${DEMO_AUTO:-0}
 parts=${DEMO_PARTS:-}
+# One part on its own is a Short: its set-up runs off screen (see prep).
+case $parts in "" | *,*) alone=0 ;; *) alone=1 ;; esac
 surprises=0
 show=1
 
@@ -123,6 +127,19 @@ run() {
         printf '\033[1;31m!! expected %s, got exit %s\033[0m\n' "$want" "$rc"
     fi
     return 0
+}
+
+# A step that only sets the scene: shown in the long video, run off screen
+# when the part is recorded on its own, where every second counts.
+prep() {
+    if [ "$alone" = 1 ]; then
+        was=$show
+        show=0
+        run "$@"
+        show=$was
+    else
+        run "$@"
+    fi
 }
 
 # Set-up the viewer does not need to watch.
@@ -242,11 +259,13 @@ say "Esta vez nada llego a la historia."
 
 part "4d. Romperlo: --no-verify, o una herramienta que se salta el hook"
 quietly git init -q --bare "$SANDBOX/github/tu/blog.git"
-run 'mkdir -p ~/code/blog && cd ~/code/blog && git init -q'
-run 'git remote add origin git@github.com:tu/blog.git'
-run 'echo "# blog" > README.md && git add . && git commit -qm "inicio" && git push -q -u origin main'
+prep 'mkdir -p ~/code/blog && cd ~/code/blog && git init -q'
+prep 'git remote add origin git@github.com:tu/blog.git'
+prep 'echo "# blog" > README.md && git add . && git commit -qm "inicio" && git push -q -u origin main'
 run "echo post >> README.md && git -c user.email=$CLIENT commit --no-verify -qam 'post'"
-say "El commit paso. El push no:"
+say "El commit paso, con el correo del cliente:"
+run "git log -1 --format='%h  %ae  %s'"
+say "Pero el push no:"
 run 'git push -q' fail
 run 'git commit --amend --no-edit --reset-author -q && git push -q'
 
