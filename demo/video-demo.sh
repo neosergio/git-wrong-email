@@ -231,8 +231,11 @@ run 'git config --global includeIf."gitdir:~/work/acme/".path ~/.gitconfig-acme'
 run 'git commit -qam "cambio"'
 
 part "4c. Romperlo: un cliente grafico reescribe el global"
+# Off screen: part 3, where ~/work/acme/app comes from, is left out of the
+# short cut of the video, so start in the personal repository from part 1.
+cd "$HOME/code/notas" || exit 1
 run "git config --global user.email $CLIENT"
-run 'cd ~/code/notas && echo mas >> README.md && git commit -qam "mas notas"' fail
+run 'echo mas >> README.md && git commit -qam "mas notas"' fail
 run 'git wrong-email doctor' fail
 run "git config --global user.email $PERSONAL"
 say "Esta vez nada llego a la historia."
